@@ -12,3 +12,7 @@ dist/
 data/*.db
 data/*.db-shm
 data/*.db-wal
+
+data/*
+
+daily-news-agent\src\data\*
