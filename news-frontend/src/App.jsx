@@ -73,7 +73,7 @@ function App() {
       <header className="hero">
         <div className="hero-badge">
           <span className="dot" />
-          AI-Powered News Agent
+          AI-Powered News Agent by sonish
         </div>
         <h1>
           Your daily <span>news briefing</span>,
