@@ -1,5 +1,6 @@
 
 import logging
+from typing import Literal
 from uuid import uuid4
 
 from news_agent.config import get_settings
@@ -18,8 +19,14 @@ from news_agent.storage.database import (
 
 logger = logging.getLogger(__name__)
 
+CountryChoice = Literal["Nepal", "India", "International"]
 
-def run_pipeline() -> RunResult:
+
+def run_pipeline(
+    country: CountryChoice = "Nepal",
+    email_to: str | None = None,
+    top_stories: int | None = None,
+) -> RunResult:
     settings = get_settings()
     run_id = str(uuid4())
 
@@ -27,11 +34,13 @@ def run_pipeline() -> RunResult:
     selected_count = 0
     emailed = False
 
+    recipient = email_to or settings.email_to
+
     initialize_database()
     start_run(run_id)
 
     try:
-        collected = collect_news()
+        collected = collect_news(country=country)
         collected_count = len(collected)
 
         if not collected:
@@ -45,7 +54,11 @@ def run_pipeline() -> RunResult:
             collected_count, len(persisted),
         )
 
-        ranked = rank_stories(persisted)
+        ranked = rank_stories(
+            persisted,
+            country=country,
+            top_stories=top_stories,
+        )
 
         # Candidate IDs are list indexes, not SQLite IDs.
         briefing = [
@@ -57,11 +70,11 @@ def run_pipeline() -> RunResult:
         if not briefing:
             raise RuntimeError("No valid stories returned by Ollama.")
 
-        send_email(briefing)
+        send_email(briefing, country=country, email_to=email_to)
         emailed = True
 
         record_delivery(
-            run_id, settings.email_to, status="sent"
+            run_id, recipient, status="sent"
         )
 
         result = RunResult(
@@ -81,16 +94,14 @@ def run_pipeline() -> RunResult:
         )
 
         logger.info(
-            "Run %s succeeded: %d stories emailed",
-            run_id, selected_count,
+            "Run %s succeeded: %d stories emailed to %s",
+            run_id, selected_count, recipient,
         )
         return result
 
     except Exception as exc:
         logger.exception("Run %s failed", run_id)
 
-        # Record email failure only if sending was attempted and failed.
-        # Failures before delivery are pipeline failures, not SMTP failures.
         try:
             finish_run(
                 run_id,

@@ -6,11 +6,19 @@ from zoneinfo import ZoneInfo
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Resolve .env relative to this file (…/daily-news-agent/.env)
+# so the API works regardless of which directory uvicorn is launched from.
+# config.py lives at: daily-news-agent/src/news_agent/config.py
+#   parents[0] = daily-news-agent/src/news_agent/
+#   parents[1] = daily-news-agent/src/
+#   parents[2] = daily-news-agent/   <-- .env is here
+_ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
+
 # lru_cache => Caches the settings object so it doesn't need to be recreated repeatedly.
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(_ENV_FILE),
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,

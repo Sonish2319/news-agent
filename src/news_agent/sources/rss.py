@@ -6,6 +6,7 @@ import unicodedata
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from time import struct_time
+from typing import Literal
 from urllib.parse import (
     parse_qsl,
     urlencode,
@@ -21,54 +22,52 @@ from news_agent.models import Story
 
 logger = logging.getLogger(__name__)
 
+CountryChoice = Literal["Nepal", "India", "International"]
 
-FEEDS = {
-    # ── International news ──
-    "BBC World": "https://feeds.bbci.co.uk/news/world/rss.xml",
-    "BBC Business": "https://feeds.bbci.co.uk/news/business/rss.xml",
-    "BBC Technology": "https://feeds.bbci.co.uk/news/technology/rss.xml",
-    "NPR": "https://feeds.npr.org/1004/rss.xml",
-    "Al Jazeera": "https://www.aljazeera.com/xml/rss/all.xml",
+# ── Feed groups by country ──────────────────────────────────────────────────
 
-    # ── Nepal: English news ──
-    "The Kathmandu Post": "https://kathmandupost.com/rss",
+FEEDS_NEPAL: dict[str, str] = {
+    "The Kathmandu Post":  "https://kathmandupost.com/rss",
     "OnlineKhabar English": "https://english.onlinekhabar.com/feed/",
-    "The Himalayan Times": "https://thehimalayantimes.com/feed/",
-    "Nepali Times": "https://www.nepalitimes.com/feed/",
-    "Ratopati English": "http://english.ratopati.com/rss/",
-    "Lokaantar English": "http://english.lokaantar.com/feed/",
-    "Kathmandu Tribune": "http://kathmandutribune.com/feed/",
-    "Setopati English": "https://en.setopati.com/feed",
-
-    # ── Nepal: Nepali news ──
-    "Setopati Nepali": "https://www.setopati.com/feed/",
-
-    # ── India: national news ──
-    "Indian Express India": "https://indianexpress.com/section/india/feed/",
-    "Indian Express World": "https://indianexpress.com/section/world/feed/",
-    "The Hindu National": "https://www.thehindu.com/news/national/feeder/default.rss",
-    "NDTV Top Stories": "https://feeds.feedburner.com/ndtvnews-top-stories",
-    "NDTV Latest": "https://feeds.feedburner.com/ndtvnews-latest",
-    "Hindustan Times India": (
-        "https://www.hindustantimes.com/feeds/rss/india-news/rssfeed.xml"
-    ),
-    "News18 India": "https://www.news18.com/rss/india.xml",
-    "India Today": "https://www.indiatoday.in/rss/1206577",
-
-    # ── India: business and economy ──
-    "Mint News": "https://www.livemint.com/rss/news",
-    "Business Standard": "https://www.business-standard.com/rss/latest.rss",
-    "Economic Times Top Stories": (
-        "https://economictimes.indiatimes.com/rssfeedstopstories.cms"
-    ),
-
-    # ── India: government and public information ──
-    "PIB India": (
-        "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=1"
-    ),
-    "India Disaster Alerts": "https://sachet.ndma.gov.in/CapFeed",
+    "The Himalayan Times":  "https://thehimalayantimes.com/feed/",
+    "Nepali Times":         "https://www.nepalitimes.com/feed/",
+    "Ratopati English":     "http://english.ratopati.com/rss/",
+    "Lokaantar English":    "http://english.lokaantar.com/feed/",
+    "Kathmandu Tribune":    "http://kathmandutribune.com/feed/",
+    "Setopati English":     "https://en.setopati.com/feed",
+    "Setopati Nepali":      "https://www.setopati.com/feed/",
+    # Also include BBC World for international context
+    "BBC World":            "https://feeds.bbci.co.uk/news/world/rss.xml",
 }
 
+FEEDS_INDIA: dict[str, str] = {
+    "Indian Express India":  "https://indianexpress.com/section/india/feed/",
+    "Indian Express World":  "https://indianexpress.com/section/world/feed/",
+    "The Hindu National":    "https://www.thehindu.com/news/national/feeder/default.rss",
+    "NDTV Top Stories":      "https://feeds.feedburner.com/ndtvnews-top-stories",
+    "NDTV Latest":           "https://feeds.feedburner.com/ndtvnews-latest",
+    "Hindustan Times India": "https://www.hindustantimes.com/feeds/rss/india-news/rssfeed.xml",
+    "News18 India":          "https://www.news18.com/rss/india.xml",
+    "India Today":           "https://www.indiatoday.in/rss/1206577",
+    "Mint News":             "https://www.livemint.com/rss/news",
+    "Business Standard":     "https://www.business-standard.com/rss/latest.rss",
+    "Economic Times":        "https://economictimes.indiatimes.com/rssfeedstopstories.cms",
+    "PIB India":             "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=1",
+}
+
+FEEDS_INTERNATIONAL: dict[str, str] = {
+    "BBC World":      "https://feeds.bbci.co.uk/news/world/rss.xml",
+    "BBC Business":   "https://feeds.bbci.co.uk/news/business/rss.xml",
+    "BBC Technology": "https://feeds.bbci.co.uk/news/technology/rss.xml",
+    "NPR":            "https://feeds.npr.org/1004/rss.xml",
+    "Al Jazeera":     "https://www.aljazeera.com/xml/rss/all.xml",
+}
+
+COUNTRY_FEEDS: dict[str, dict[str, str]] = {
+    "Nepal":         FEEDS_NEPAL,
+    "India":         FEEDS_INDIA,
+    "International": FEEDS_INTERNATIONAL,
+}
 
 TRACKING_PARAMS = {
     "fbclid", "gclid", "mc_cid", "mc_eid",
@@ -133,9 +132,12 @@ def parse_published(entry) -> datetime | None:
     return None
 
 
-def collect_news() -> list[Story]:
+def collect_news(country: CountryChoice = "Nepal") -> list[Story]:
+    """Fetch RSS stories for the given country."""
     settings = get_settings()
     collected_at = datetime.now(timezone.utc)
+
+    feeds = COUNTRY_FEEDS.get(country, FEEDS_NEPAL)
 
     session = requests.Session()
     session.headers.update({
@@ -147,7 +149,7 @@ def collect_news() -> list[Story]:
     seen_titles: set[str] = set()
 
     try:
-        for source, feed_url in FEEDS.items():
+        for source, feed_url in feeds.items():
             try:
                 response = session.get(feed_url, timeout=(5, 20))
                 response.raise_for_status()
@@ -175,7 +177,6 @@ def collect_news() -> list[Story]:
                     try:
                         normalized_url = normalize_url(link)
                         story_url = normalized_url
-                        # Validate the URL through the model below.
                         title_key = normalize_title(title)
 
                         if (
@@ -215,5 +216,8 @@ def collect_news() -> list[Story]:
     finally:
         session.close()
 
-    logger.info("Collected %d unique RSS stories", len(stories))
+    logger.info(
+        "Collected %d unique RSS stories for %s",
+        len(stories), country,
+    )
     return stories

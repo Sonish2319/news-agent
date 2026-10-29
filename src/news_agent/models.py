@@ -16,6 +16,7 @@ Category = Literal[
     "Health",
     "Environment",
     "Nepal",
+    "India",
     "Other",
 ]
 
