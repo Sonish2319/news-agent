@@ -20,6 +20,11 @@ Category = Literal[
     "Other",
 ]
 
+# "new"      → story was not present in yesterday's briefing
+# "ongoing"  → story appeared in yesterday's briefing too
+# "resolved" → a related story appeared yesterday but not today
+Trend = Literal["new", "ongoing", "resolved"]
+
 # str_strip_whitespace=True tells Pydantic to remove leading and trailing whitespace from string fields.
 
 class Story(BaseModel):
@@ -34,6 +39,9 @@ class Story(BaseModel):
     collected_at: datetime
     content_hash: str = Field(min_length=1, max_length=64)
 
+    # Set to False when the story was already in the database before this run.
+    is_new: bool = True
+
 
 class RankedStory(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
@@ -44,6 +52,9 @@ class RankedStory(BaseModel):
     summary: str = Field(min_length=1, max_length=1200)
     why_it_matters: str = Field(min_length=1, max_length=600)
     category: Category
+
+    # Populated after ranking by the comparison module.
+    trend: Trend = "new"
 
 
 class Briefing(BaseModel):
@@ -57,4 +68,13 @@ class RunResult(BaseModel):
     collected_count: int = 0
     selected_count: int = 0
     emailed: bool = False
+    error: str | None = None
+
+
+class DeliveryAttempt(BaseModel):
+    """Recorded after every email send attempt, successful or not."""
+    run_id: str
+    recipient: str
+    status: Literal["sent", "failed"]
+    attempted_at: datetime
     error: str | None = None

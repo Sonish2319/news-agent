@@ -1,12 +1,15 @@
 """
 FastAPI server for the News Agent.
 
-POST /api/news  →  queues a background job and immediately returns 202.
-GET  /api/health →  liveness check.
+POST /api/news              →  queues a background job and immediately returns 202.
+GET  /api/health            →  liveness check.
+GET  /api/scheduler/status  →  current scheduler state and next-run times.
+POST /api/scheduler/trigger →  manually trigger a breaking-news check.
 """
 
 import logging
 import threading
+from contextlib import asynccontextmanager
 from typing import Literal
 
 from fastapi import FastAPI
@@ -15,14 +18,30 @@ from pydantic import BaseModel, EmailStr, Field
 
 from news_agent.logging_config import configure_logging
 from news_agent.pipeline import run_pipeline
+from news_agent.scheduler import (
+    scheduler_status,
+    start_scheduler,
+    stop_scheduler,
+)
 
 configure_logging()
 logger = logging.getLogger(__name__)
 
+
+# ── Lifespan: start/stop the APScheduler alongside FastAPI ───────────────────
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    start_scheduler()
+    yield
+    stop_scheduler()
+
+
 app = FastAPI(
     title="News Agent API",
-    version="1.0.0",
+    version="2.0.0",
     description="AI-powered news briefing agent",
+    lifespan=lifespan,
 )
 
 # Allow requests from the React dev server (port 5173) and any localhost port.
@@ -91,6 +110,8 @@ def _run_agent_in_background(
         )
 
 
+# ── Endpoints ─────────────────────────────────────────────────────────────────
+
 @app.get("/api/health")
 def health_check() -> dict:
     return {"status": "ok"}
@@ -125,3 +146,24 @@ def request_news(payload: NewsRequest) -> NewsResponse:
             f"Since we use a local AI model, this may take a few minutes."
         )
     )
+
+
+@app.get("/api/scheduler/status")
+def get_scheduler_status() -> dict:
+    """Return the current scheduler state and next-run times for all jobs."""
+    return scheduler_status()
+
+
+@app.post("/api/scheduler/trigger", status_code=202)
+def trigger_breaking_news_check() -> dict:
+    """Manually trigger a breaking-news check in a background thread."""
+    from news_agent.scheduler import _check_breaking_news
+
+    thread = threading.Thread(
+        target=_check_breaking_news,
+        daemon=True,
+        name="breaking-news-manual-trigger",
+    )
+    thread.start()
+
+    return {"message": "Breaking-news check triggered in background."}

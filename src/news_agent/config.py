@@ -27,17 +27,43 @@ class Settings(BaseSettings):
     ollama_model: str = "qwen3:4b"
     ollama_url: str = "http://localhost:11434"
     ollama_timeout: int = Field(default=800, ge=1, le=900)
+    # Max retries for Ollama ranking calls (already has 3 attempts in ranking.py).
+    ollama_max_retries: int = Field(default=3, ge=1, le=10)
 
     gmail_address: str
     gmail_app_password: SecretStr
     email_to: str
+    # Max retries for SMTP delivery (each retry doubles the wait: 5s, 10s …)
+    smtp_max_retries: int = Field(default=2, ge=0, le=5)
 
     top_stories: int = Field(default=20, ge=1, le=30)
     rss_entries_per_feed: int = Field(default=20, ge=1, le=100)
+    max_stories_per_source: int | None = Field(
+        default=None,
+        ge=1,
+        le=20,
+        description="Maximum stories from a single source. If None, dynamically scales with top_stories.",
+    )
 
     database_path: Path = Path("data/news.db")
     log_level: str = "INFO"
     timezone_name: str = "Asia/Kathmandu"
+
+    # ── Personal preferences ─────────────────────────────────────────────────
+    # Comma-separated list of topic keywords/categories the user cares about.
+    # Example: TOPIC_PREFERENCES="Technology,Science,Nepal"
+    topic_preferences: str = ""
+
+    # How many hours back to look when preventing repeat briefings.
+    briefing_dedup_hours: int = Field(default=20, ge=1, le=168)
+
+    # ── Breaking-news scheduler ───────────────────────────────────────────────
+    # Hour (local timezone) at which the daily briefing fires automatically.
+    breaking_news_hour: int = Field(default=7, ge=0, le=23)
+    # Stories scoring >= this threshold trigger a breaking-news alert email.
+    breaking_news_score_threshold: int = Field(default=9, ge=1, le=10)
+    # Enable the background scheduler (set to "true" in .env to activate).
+    scheduler_enabled: bool = False
 
     @field_validator("ollama_url")
     @classmethod
@@ -53,6 +79,11 @@ class Settings(BaseSettings):
             raise ValueError(f"LOG_LEVEL must be one of {allowed}")
         return value
 
+    def parsed_topic_preferences(self) -> list[str]:
+        """Return a cleaned list of preferred topic strings."""
+        if not self.topic_preferences:
+            return []
+        return [t.strip() for t in self.topic_preferences.split(",") if t.strip()]
 
 # @property lets you access a method like an attribute. ex: settings.timezone
     @property

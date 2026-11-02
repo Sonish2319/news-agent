@@ -53,21 +53,60 @@ def initialize_database() -> None:
             error TEXT
         );
 
+        -- Persistent briefing history: records every story hash sent to a
+        -- recipient so we never repeat the same story in a later briefing.
+        CREATE TABLE IF NOT EXISTS briefing_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL REFERENCES runs(id),
+            recipient TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            briefed_at TEXT NOT NULL
+        );
+
         CREATE INDEX IF NOT EXISTS idx_stories_published
         ON stories(published_at);
 
         CREATE INDEX IF NOT EXISTS idx_runs_started
         ON runs(started_at);
+
+        CREATE INDEX IF NOT EXISTS idx_briefing_history_recipient
+        ON briefing_history(recipient, briefed_at);
+
+        CREATE INDEX IF NOT EXISTS idx_briefing_history_hash
+        ON briefing_history(content_hash);
         """)
 
 
+# ── Story persistence ────────────────────────────────────────────────────────
+
+def get_known_hashes(since: datetime | None = None) -> set[str]:
+    """Return content hashes of stories already in the database.
+
+    If *since* is provided, only hashes collected on or after that time are
+    returned.  Pass ``None`` to get every stored hash (useful for unit tests).
+    """
+    with connect() as db:
+        if since is None:
+            rows = db.execute("SELECT content_hash FROM stories").fetchall()
+        else:
+            rows = db.execute(
+                "SELECT content_hash FROM stories WHERE collected_at >= ?",
+                (since.isoformat(),),
+            ).fetchall()
+    return {row["content_hash"] for row in rows}
+
+
 def save_stories(stories: list[Story]) -> list[Story]:
-    """Persist stories and return them with their database IDs."""
+    """Persist stories and return them with their database IDs.
+
+    Stories whose *content_hash* is already in the DB are returned with
+    ``is_new=False``; freshly inserted rows get ``is_new=True``.
+    """
     saved: list[Story] = []
 
     with connect() as db:
         for story in stories:
-            db.execute(
+            cursor = db.execute(
                 """
                 INSERT INTO stories (
                     content_hash, title, summary, source, url,
@@ -88,15 +127,20 @@ def save_stories(stories: list[Story]) -> list[Story]:
                 ),
             )
 
+            # rowcount == 0  → row already existed (duplicate)
+            is_new = cursor.rowcount > 0
+
             row = db.execute(
                 "SELECT id FROM stories WHERE content_hash = ?",
                 (story.content_hash,),
             ).fetchone()
 
-            saved.append(story.model_copy(update={"id": row["id"]}))
+            saved.append(story.model_copy(update={"id": row["id"], "is_new": is_new}))
 
     return saved
 
+
+# ── Run lifecycle ────────────────────────────────────────────────────────────
 
 def start_run(run_id: str) -> None:
     with connect() as db:
@@ -145,6 +189,8 @@ def finish_run(
         )
 
 
+# ── Delivery recording ───────────────────────────────────────────────────────
+
 def record_delivery(
     run_id: str,
     recipient: str,
@@ -170,4 +216,45 @@ def record_delivery(
                 datetime.now(timezone.utc).isoformat(),
                 error[:2000] if error else None,
             ),
+        )
+
+
+# ── Briefing history (prevent repeat emails) ─────────────────────────────────
+
+def get_briefed_hashes(recipient: str, window_hours: int) -> set[str]:
+    """Return content hashes sent to *recipient* within the last *window_hours*.
+
+    Used by the pipeline to skip stories the user has already received.
+    """
+    from datetime import timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=window_hours)).isoformat()
+
+    with connect() as db:
+        rows = db.execute(
+            """
+            SELECT content_hash
+            FROM briefing_history
+            WHERE recipient = ? AND briefed_at >= ?
+            """,
+            (recipient, cutoff),
+        ).fetchall()
+
+    return {row["content_hash"] for row in rows}
+
+
+def record_briefing_stories(
+    run_id: str,
+    recipient: str,
+    content_hashes: list[str],
+) -> None:
+    """Persist the hashes of stories that were included in a sent briefing."""
+    now = datetime.now(timezone.utc).isoformat()
+
+    with connect() as db:
+        db.executemany(
+            """
+            INSERT INTO briefing_history (run_id, recipient, content_hash, briefed_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            [(run_id, recipient, h, now) for h in content_hashes],
         )

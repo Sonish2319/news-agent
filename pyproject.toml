@@ -17,12 +17,17 @@ dependencies = [
     "fastapi>=0.100.0",
     "uvicorn>=0.20.0",
     "python-multipart>=0.0.6",
+    "apscheduler>=3.10.4",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
     "pytest-cov>=5.0.0",
+    "pytest-mock>=3.14.0",
+]
+scheduler = [
+    "apscheduler>=3.10.0",
 ]
 
 [tool.setuptools.packages.find]
